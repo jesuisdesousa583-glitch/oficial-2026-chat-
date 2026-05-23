@@ -384,10 +384,44 @@ app.post("/send-audio", authMiddleware, async (req, res) => {
     if (!jid) {
       return res.status(400).json({ ok: false, error: "could not resolve target jid" });
     }
-    const buf = Buffer.from(audio_base64, "base64");
+    let buf = Buffer.from(audio_base64, "base64");
+    // FIX MOBILE: WhatsApp NO CELULAR só toca voice notes em OGG/OPUS.
+    // MP3 com ptt:true funciona no WhatsApp Web/Desktop mas não toca no Android/iOS.
+    // Convertemos qualquer formato pra OGG/OPUS antes de enviar como PTT.
+    try {
+      const { spawn } = require("child_process");
+      const oggBuf = await new Promise((resolve, reject) => {
+        const ff = spawn("ffmpeg", [
+          "-i", "pipe:0",
+          "-c:a", "libopus",
+          "-b:a", "32k",       // bitrate típico de voice note WhatsApp
+          "-ar", "48000",      // sample rate exigido pelo OPUS
+          "-ac", "1",          // mono
+          "-vn",
+          "-f", "ogg",
+          "pipe:1",
+        ], { stdio: ["pipe", "pipe", "pipe"] });
+        const chunks = [];
+        let stderr = "";
+        ff.stdout.on("data", (c) => chunks.push(c));
+        ff.stderr.on("data", (c) => stderr += c.toString());
+        ff.on("error", (e) => reject(e));
+        ff.on("close", (code) => {
+          if (code === 0) resolve(Buffer.concat(chunks));
+          else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-300)}`));
+        });
+        ff.stdin.write(buf);
+        ff.stdin.end();
+      });
+      buf = oggBuf;
+      console.log(`[baileys] audio converted: in=${audio_base64.length}b base64 -> out=${oggBuf.length}b ogg/opus`);
+    } catch (convErr) {
+      console.warn("[baileys] ffmpeg conversion failed, sending original buffer:", convErr.message);
+      // Cai pro envio original (vai tocar no desktop mas pode falhar no mobile)
+    }
     const r = await sock.sendMessage(jid, {
       audio: buf,
-      mimetype: mime || "audio/mp4",
+      mimetype: "audio/ogg; codecs=opus",
       ptt: true,
     });
     res.json({ ok: true, message_id: r?.key?.id, jid });
