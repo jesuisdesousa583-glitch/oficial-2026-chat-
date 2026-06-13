@@ -169,22 +169,20 @@ class WhatsAppConfig(BaseModel):
     meta_phone_number_id: Optional[str] = None
     bot_enabled: bool = False
     bot_prompt: Optional[str] = None
-    # Modo de voz do bot na resposta WhatsApp:
-    #   "text_only"      -> apenas texto (legado)
-    #   "text_and_audio" -> envia AMBOS texto + audio TTS (default, opcao B)
-    #   "audio_only"     -> apenas audio TTS (opcao A)
-    #   "auto"           -> texto+audio quando o cliente prefere audio (envia audio
-    #                       primeiro e em mensagens seguintes), so texto caso contrario
+    # Modo de voz do bot na resposta WhatsApp
     bot_voice_mode: Literal["text_only", "text_and_audio", "audio_only", "auto"] = "text_and_audio"
-    # Provedor de TTS: "openai" (Emergent LLM Key, gratis) ou "elevenlabs"
-    # (chave propria do usuario, voz clonada da Dra. Kenia)
+    # Provedor LLM para gerar respostas do bot:
+    #   "emergent" -> Emergent LLM Key (gpt-5.2 / gpt-4o-mini) [padrao, melhor qualidade]
+    #   "ollama"   -> Ollama local na maquina do usuario via tunnel (gratis)
+    llm_provider: Literal["emergent", "ollama"] = "emergent"
+    ollama_base_url: Optional[str] = None  # ex: https://meu-tunnel.trycloudflare.com
+    ollama_model: Optional[str] = None     # ex: llama3.2:3b, qwen2.5:7b, mistral:7b
+    # Provedor de TTS
     voice_provider: Literal["openai", "elevenlabs"] = "openai"
-    # Voz da OpenAI TTS usada nas respostas (nova/shimmer/coral/fable/alloy/onyx/echo)
     bot_voice: str = "nova"
-    # ElevenLabs (apenas se voice_provider="elevenlabs")
     elevenlabs_api_key: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
-    elevenlabs_voice_name: Optional[str] = None  # somente exibicao (read-only no UI)
+    elevenlabs_voice_name: Optional[str] = None
 
 class DebugInstruction(BaseModel):
     instruction: str
@@ -3973,6 +3971,19 @@ async def _baileys_watchdog_loop():
                 except Exception: pass
                 await asyncio.sleep(2)
                 _spawn_baileys()
+        except Exception:
+            logger.exception("[baileys-watchdog] tick error")
+        import asyncio as _a
+        await _a.sleep(15)
+
+@app.on_event("startup")
+async def _start_baileys_watchdog():
+    import asyncio
+    # fire-and-forget watchdog; don't block startup
+    _spawn_baileys()
+    asyncio.create_task(_baileys_watchdog_loop())
+    logger.info("[baileys-watchdog] started")
+          _spawn_baileys()
         except Exception:
             logger.exception("[baileys-watchdog] tick error")
         import asyncio as _a
